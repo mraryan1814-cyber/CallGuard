@@ -1,80 +1,83 @@
 package com.callguard.app.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.callguard.app.MainActivity
 import com.callguard.app.R
 
-/**
- * Companion to CallScreeningServiceImpl. CallScreeningService only decides
- * block/allow at the moment a call arrives; this service uses
- * TelephonyCallback (API 31+) / PhoneStateListener (below 31) to observe the
- * live call state (RINGING -> OFFHOOK -> IDLE) so we know exactly when an
- * allowed call rings and when it disconnects. That's what makes item #4
- * ("call disconnect hote hi wapas block ho jaye") observable/loggable - the
- * blocking logic itself is naturally re-armed on the next incoming call by
- * CallGuardEngine, this service just keeps state fresh and the notification alive.
- */
 class CallMonitorService : Service() {
 
-    private lateinit var telephonyManager: TelephonyManager
+    private var telephonyManager: TelephonyManager? = null
     private var legacyListener: PhoneStateListener? = null
     private var modernCallback: TelephonyCallback? = null
 
     override fun onCreate() {
         super.onCreate()
-        startForegroundWithNotification()
-        telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
-        registerCallStateWatcher()
+        try {
+            startForegroundWithNotification()
+            telephonyManager = getSystemService(TELEPHONY_SERVICE) as? TelephonyManager
+            registerCallStateWatcher()
+        } catch (_: Exception) {
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_STICKY
     }
 
+    private fun hasPhoneStatePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this, Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     private fun registerCallStateWatcher() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
-                override fun onCallStateChanged(state: Int) {
-                    handleState(state)
+        if (!hasPhoneStatePermission()) return
+        val tm = telephonyManager ?: return
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                    override fun onCallStateChanged(state: Int) {
+                        handleState(state)
+                    }
                 }
-            }
-            modernCallback = callback
-            telephonyManager.registerTelephonyCallback(mainExecutor, callback)
-        } else {
-            @Suppress("DEPRECATION")
-            val listener = object : PhoneStateListener() {
-                @Deprecated("Deprecated in Java")
-                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    handleState(state)
+                modernCallback = callback
+                tm.registerTelephonyCallback(mainExecutor, callback)
+            } else {
+                @Suppress("DEPRECATION")
+                val listener = object : PhoneStateListener() {
+                    @Deprecated("Deprecated in Java")
+                    override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                        handleState(state)
+                    }
                 }
+                legacyListener = listener
+                @Suppress("DEPRECATION")
+                tm.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
             }
-            legacyListener = listener
-            @Suppress("DEPRECATION")
-            telephonyManager.listen(listener, PhoneStateListener.LISTEN_CALL_STATE)
+        } catch (_: SecurityException) {
         }
     }
 
     private fun handleState(state: Int) {
-        // TelephonyManager.CALL_STATE_IDLE / RINGING / OFFHOOK
-        // Real call-number correlation for history is handled at screening time
-        // in CallScreeningServiceImpl (which has direct access to Call.Details).
-        // This watcher's job is simply to keep call-state awareness alive so the
-        // app's "currently ringing / in-call" UI state (if shown) stays accurate,
-        // and to guarantee the block state naturally re-applies once IDLE is reached.
         when (state) {
-            TelephonyManager.CALL_STATE_IDLE -> { /* call ended - next incoming call re-evaluated fresh */ }
-            TelephonyManager.CALL_STATE_RINGING -> { /* handled by CallScreeningServiceImpl */ }
-            TelephonyManager.CALL_STATE_OFFHOOK -> { /* call answered/active */ }
+            TelephonyManager.CALL_STATE_IDLE -> { }
+            TelephonyManager.CALL_STATE_RINGING -> { }
+            TelephonyManager.CALL_STATE_OFFHOOK -> { }
         }
     }
 
@@ -103,11 +106,15 @@ class CallMonitorService : Service() {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                1001, notification,
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasPhoneStatePermission()) {
+            try {
+                startForeground(
+                    1001, notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                )
+            } catch (_: Exception) {
+                startForeground(1001, notification)
+            }
         } else {
             startForeground(1001, notification)
         }
@@ -115,11 +122,14 @@ class CallMonitorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            modernCallback?.let { telephonyManager.unregisterTelephonyCallback(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            legacyListener?.let { telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE) }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                modernCallback?.let { telephonyManager?.unregisterTelephonyCallback(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                legacyListener?.let { telephonyManager?.listen(it, PhoneStateListener.LISTEN_NONE) }
+            }
+        } catch (_: Exception) {
         }
     }
 
