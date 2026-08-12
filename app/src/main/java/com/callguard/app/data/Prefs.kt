@@ -180,3 +180,181 @@ class Prefs(private val context: Context) {
         context.dataStore.edit { it[Keys.LAST_RESET_DAY] = day }
     }
 }
+package com.callguard.app.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import java.security.MessageDigest
+
+private val Context.dataStore by preferencesDataStore(name = "callguard_prefs")
+
+class Prefs(private val context: Context) {
+
+    private object Keys {
+        val PIN_HASH = stringPreferencesKey("pin_hash")
+        val PIN_SET = booleanPreferencesKey("pin_set")
+        val MASTER_ENABLED = booleanPreferencesKey("master_enabled")
+        val SILENT_MODE = booleanPreferencesKey("silent_mode")
+        val BLOCK_COUNT = intPreferencesKey("block_count")
+        val TIME_GAP_MINUTES = intPreferencesKey("time_gap_minutes")
+        val MONITORED_NUMBERS = stringPreferencesKey("monitored_numbers")
+        val WHITELIST_NUMBERS = stringPreferencesKey("whitelist_numbers")
+        val LAST_RESET_DAY = stringPreferencesKey("last_reset_day")
+    }
+
+    companion object {
+        const val MASTER_CODE = "bettaua"
+        private const val DELIM = "|"
+
+        fun sha256(input: String): String {
+            val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+            return bytes.joinToString("") { "%02x".format(it) }
+        }
+
+        fun normalize(number: String): String {
+            val sb = StringBuilder()
+            for ((i, c) in number.withIndex()) {
+                if (c.isDigit()) sb.append(c)
+                if (c == '+' && i == 0) sb.append(c)
+            }
+            return sb.toString()
+        }
+
+        fun numbersMatch(a: String, b: String): Boolean {
+            val digitsA = a.filter { it.isDigit() }
+            val digitsB = b.filter { it.isDigit() }
+            if (digitsA.isEmpty() || digitsB.isEmpty()) return false
+            val compareLength = minOf(digitsA.length, digitsB.length, 10)
+            if (compareLength < 7) return false
+            return digitsA.takeLast(compareLength) == digitsB.takeLast(compareLength)
+        }
+    }
+
+    val isPinSet: Flow<Boolean> = context.dataStore.data.map { it[Keys.PIN_SET] ?: false }
+
+    suspend fun setPin(pin: String) {
+        context.dataStore.edit {
+            it[Keys.PIN_HASH] = sha256(pin)
+            it[Keys.PIN_SET] = true
+        }
+    }
+
+    suspend fun verifyPin(pin: String): Boolean {
+        val stored = context.dataStore.data.first()[Keys.PIN_HASH] ?: return false
+        return stored == sha256(pin)
+    }
+
+    suspend fun verifyMasterCode(code: String): Boolean {
+        return code.trim().equals(MASTER_CODE, ignoreCase = true)
+    }
+
+    suspend fun resetPinAfterMasterCode() {
+        context.dataStore.edit { it[Keys.PIN_SET] = false }
+    }
+
+    val masterEnabled: Flow<Boolean> = context.dataStore.data.map { it[Keys.MASTER_ENABLED] ?: true }
+
+    suspend fun setMasterEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.MASTER_ENABLED] = enabled }
+    }
+
+    suspend fun getMasterEnabledOnce(): Boolean = masterEnabled.first()
+
+    val silentMode: Flow<Boolean> = context.dataStore.data.map { it[Keys.SILENT_MODE] ?: false }
+
+    suspend fun setSilentMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.SILENT_MODE] = enabled }
+    }
+
+    suspend fun getSilentModeOnce(): Boolean = silentMode.first()
+
+    val blockCount: Flow<Int> = context.dataStore.data.map { it[Keys.BLOCK_COUNT] ?: 4 }
+
+    suspend fun setBlockCount(count: Int) {
+        context.dataStore.edit { it[Keys.BLOCK_COUNT] = count }
+    }
+
+    suspend fun getBlockCountOnce(): Int = blockCount.first()
+
+    val timeGapMinutes: Flow<Int> = context.dataStore.data.map { it[Keys.TIME_GAP_MINUTES] ?: 2 }
+
+    suspend fun setTimeGapMinutes(minutes: Int) {
+        context.dataStore.edit { it[Keys.TIME_GAP_MINUTES] = minutes }
+    }
+
+    suspend fun getTimeGapMinutesOnce(): Int = timeGapMinutes.first()
+
+    val monitoredNumbers: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.MONITORED_NUMBERS]?.split(DELIM)?.filter { it.isNotBlank() } ?: emptyList()
+    }
+
+    suspend fun getMonitoredNumbersOnce(): List<String> = monitoredNumbers.first()
+
+    suspend fun addMonitoredNumber(number: String) {
+        val norm = normalize(number)
+        if (norm.isBlank()) return
+        context.dataStore.edit {
+            val current = it[Keys.MONITORED_NUMBERS]?.split(DELIM)?.filter { n -> n.isNotBlank() }?.toMutableList()
+                ?: mutableListOf()
+            if (!current.contains(norm)) current.add(norm)
+            it[Keys.MONITORED_NUMBERS] = current.joinToString(DELIM)
+        }
+    }
+
+    suspend fun removeMonitoredNumber(number: String) {
+        val norm = normalize(number)
+        context.dataStore.edit {
+            val current = it[Keys.MONITORED_NUMBERS]?.split(DELIM)?.filter { n -> n.isNotBlank() }?.toMutableList()
+                ?: mutableListOf()
+            current.remove(norm)
+            it[Keys.MONITORED_NUMBERS] = current.joinToString(DELIM)
+        }
+    }
+
+    suspend fun setAllMonitoredNumbers(numbers: List<String>) {
+        context.dataStore.edit {
+            it[Keys.MONITORED_NUMBERS] = numbers.map { n -> normalize(n) }.filter { n -> n.isNotBlank() }
+                .joinToString(DELIM)
+        }
+    }
+
+    val whitelistNumbers: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.WHITELIST_NUMBERS]?.split(DELIM)?.filter { it.isNotBlank() } ?: emptyList()
+    }
+
+    suspend fun getWhitelistNumbersOnce(): List<String> = whitelistNumbers.first()
+
+    suspend fun addWhitelistNumber(number: String) {
+        val norm = normalize(number)
+        if (norm.isBlank()) return
+        context.dataStore.edit {
+            val current = it[Keys.WHITELIST_NUMBERS]?.split(DELIM)?.filter { n -> n.isNotBlank() }?.toMutableList()
+                ?: mutableListOf()
+            if (!current.contains(norm)) current.add(norm)
+            it[Keys.WHITELIST_NUMBERS] = current.joinToString(DELIM)
+        }
+    }
+
+    suspend fun removeWhitelistNumber(number: String) {
+        val norm = normalize(number)
+        context.dataStore.edit {
+            val current = it[Keys.WHITELIST_NUMBERS]?.split(DELIM)?.filter { n -> n.isNotBlank() }?.toMutableList()
+                ?: mutableListOf()
+            current.remove(norm)
+            it[Keys.WHITELIST_NUMBERS] = current.joinToString(DELIM)
+        }
+    }
+
+    suspend fun getLastResetDay(): String? = context.dataStore.data.first()[Keys.LAST_RESET_DAY]
+
+    suspend fun setLastResetDay(day: String) {
+        context.dataStore.edit { it[Keys.LAST_RESET_DAY] = day }
+    }
+}
