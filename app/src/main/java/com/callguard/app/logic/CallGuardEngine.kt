@@ -23,7 +23,8 @@ class CallGuardEngine(context: Context) {
         val now = System.currentTimeMillis()
 
         return runBlocking {
-            val whitelisted = prefs.getWhitelistNumbersOnce().contains(number)
+            val whitelistNumbers = prefs.getWhitelistNumbersOnce()
+            val whitelisted = whitelistNumbers.any { Prefs.numbersMatch(number, it) }
             if (whitelisted) {
                 return@runBlocking Decision.Allow to HistoryEntity(
                     phoneNumber = number, timestampMillis = now,
@@ -32,7 +33,9 @@ class CallGuardEngine(context: Context) {
             }
 
             val masterEnabled = prefs.getMasterEnabledOnce()
-            val monitored = prefs.getMonitoredNumbersOnce().contains(number)
+            val monitoredNumbers = prefs.getMonitoredNumbersOnce()
+            val matchedStoredNumber = monitoredNumbers.firstOrNull { Prefs.numbersMatch(number, it) }
+            val monitored = matchedStoredNumber != null
 
             if (!masterEnabled || !monitored) {
                 return@runBlocking Decision.Allow to HistoryEntity(
@@ -41,22 +44,24 @@ class CallGuardEngine(context: Context) {
                 )
             }
 
+            val storageKey = matchedStoredNumber!!
+
             val blockCount = prefs.getBlockCountOnce()
             val gapMinutes = prefs.getTimeGapMinutesOnce()
             val gapMillis = gapMinutes * 60_000L
             val isSilent = prefs.getSilentModeOnce()
 
-            val state = counterStore.getState(number)
+            val state = counterStore.getState(storageKey)
 
             val windowStillOpen = state.lastCallTimeMillis != 0L &&
                 (now - state.lastCallTimeMillis) <= gapMillis
 
             return@runBlocking if (windowStillOpen) {
                 val newCount = state.count + 1
-                counterStore.saveState(number, NumberState(newCount, now))
+                counterStore.saveState(storageKey, NumberState(newCount, now))
                 val outcome = if (isSilent) CallOutcome.SILENCED else CallOutcome.BLOCKED
                 Decision.Block(silent = isSilent) to HistoryEntity(
-                    phoneNumber = number, timestampMillis = now,
+                    phoneNumber = storageKey, timestampMillis = now,
                     outcome = outcome, counterAtEvent = newCount
                 )
             } else {
@@ -64,16 +69,16 @@ class CallGuardEngine(context: Context) {
                     state.lastCallTimeMillis != 0L && state.count == blockCount
 
                 if (previousWindowMatchedExactly) {
-                    counterStore.saveState(number, NumberState(0, now))
+                    counterStore.saveState(storageKey, NumberState(0, now))
                     Decision.Allow to HistoryEntity(
-                        phoneNumber = number, timestampMillis = now,
+                        phoneNumber = storageKey, timestampMillis = now,
                         outcome = CallOutcome.ALLOWED, counterAtEvent = state.count
                     )
                 } else {
-                    counterStore.saveState(number, NumberState(1, now))
+                    counterStore.saveState(storageKey, NumberState(1, now))
                     val outcome = if (isSilent) CallOutcome.SILENCED else CallOutcome.BLOCKED
                     Decision.Block(silent = isSilent) to HistoryEntity(
-                        phoneNumber = number, timestampMillis = now,
+                        phoneNumber = storageKey, timestampMillis = now,
                         outcome = outcome, counterAtEvent = 1
                     )
                 }
