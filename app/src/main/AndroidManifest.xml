@@ -42,8 +42,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Core blocking logic: system calls this for every incoming call
-             once CallGuard is set as the default Call Screening app -->
         <service
             android:name=".service.CallScreeningServiceImpl"
             android:exported="true"
@@ -53,8 +51,6 @@
             </intent-filter>
         </service>
 
-        <!-- Watches call state (RINGING/OFFHOOK/IDLE) for history logging
-             and to trigger "re-block after disconnect" bookkeeping -->
         <service
             android:name=".service.CallMonitorService"
             android:exported="false"
@@ -71,6 +67,14 @@
         <receiver
             android:name=".receiver.MidnightResetReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".receiver.PhoneStateBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".tile.MasterSwitchTileService"
