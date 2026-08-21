@@ -21,7 +21,6 @@ class CallGuardEngine(context: Context) {
     fun evaluate(rawNumber: String): Pair<Decision, HistoryEntity> {
         val number = Prefs.normalize(rawNumber)
         val now = System.currentTimeMillis()
-
         return runBlocking {
             val whitelistNumbers = prefs.getWhitelistNumbersOnce()
             val whitelisted = whitelistNumbers.any { Prefs.numbersMatch(number, it) }
@@ -43,6 +42,45 @@ class CallGuardEngine(context: Context) {
                     outcome = CallOutcome.IGNORED, counterAtEvent = 0
                 )
             }
+
+            val storageKey = matchedStoredNumber!!
+            val blockCount = prefs.getBlockCountOnce()
+            val gapMinutes = prefs.getTimeGapMinutesOnce()
+            val gapMillis = gapMinutes * 60_000L
+            val isSilent = prefs.getSilentModeOnce()
+            val state = counterStore.getState(storageKey)
+            val windowStillOpen = state.lastCallTimeMillis != 0L &&
+                (now - state.lastCallTimeMillis) <= gapMillis
+
+            return@runBlocking if (windowStillOpen) {
+                val newCount = state.count + 1
+                if (newCount >= blockCount) {
+                    // ✅ Nth call: RING hone do, counter reset (naya cycle)
+                    counterStore.saveState(storageKey, NumberState(0, now))
+                    Decision.Allow to HistoryEntity(
+                        phoneNumber = storageKey, timestampMillis = now,
+                        outcome = CallOutcome.ALLOWED, counterAtEvent = newCount
+                    )
+                } else {
+                    // Count se kam → block
+                    counterStore.saveState(storageKey, NumberState(newCount, now))
+                    val outcome = if (isSilent) CallOutcome.SILENCED else CallOutcome.BLOCKED
+                    Decision.Block(silent = isSilent) to HistoryEntity(
+                        phoneNumber = storageKey, timestampMillis = now,
+                        outcome = outcome, counterAtEvent = newCount
+                    )
+                }
+            } else {
+                // Gap cross → naya window, counter 1 se shuru
+                counterStore.saveState(storageKey, NumberState(1, now))
+                val outcome = if (isSilent) CallOutcome.SILENCED else CallOutcome.BLOCKED
+                Decision.Block(silent = isSilent) to HistoryEntity(
+                    phoneNumber = storageKey, timestampMillis = now,
+                    outcome = outcome, counterAtEvent = 1
+                )
+            }
+        }
+    }
 
             val storageKey = matchedStoredNumber!!
 
