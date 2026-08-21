@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.callguard.app.data.CounterStore
+import com.callguard.app.data.DebugStats
 import com.callguard.app.data.Prefs
 import kotlinx.coroutines.launch
 
@@ -58,6 +59,33 @@ fun HomeScreen(
                     Switch(
                         checked = masterEnabled,
                         onCheckedChange = { scope.launch { prefs.setMasterEnabled(it) } }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+            val screenedCount = remember { DebugStats.getScreeningInvokedCount(context) }
+            val ringingCount = remember { DebugStats.getRingingDetectedCount(context) }
+            val lastNumberSeen = remember { DebugStats.getLastNumberSeen(context) }
+            val lastError = remember { DebugStats.getLastError(context) }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Diagnostic Info", style = MaterialTheme.typography.titleSmall)
+                    Text("System ne app ko call di: $screenedCount baar", style = MaterialTheme.typography.bodySmall)
+                    Text("Ringing detect hui (background): $ringingCount baar", style = MaterialTheme.typography.bodySmall)
+                    if (lastNumberSeen != null) {
+                        Text("Last number dekha gaya: $lastNumberSeen", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (lastError != null) {
+                        Text(
+                            "Last error: $lastError",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Text(
+                        "(dono 0 ho to phone permission/system issue hai; sirf pehla 0 ho to sirf call-screening role ka issue hai)",
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
