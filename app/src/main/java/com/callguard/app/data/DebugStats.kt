@@ -8,6 +8,25 @@ object DebugStats {
     private const val KEY_SCREEN_INVOKED = "screen_invoked_count"
     private const val KEY_LAST_ERROR = "last_error"
     private const val KEY_LAST_NUMBER = "last_number_seen"
+    private const val KEY_RINGING_DETECTED = "ringing_detected_count"
+
+    fun recordRingingDetected(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val current = prefs.getInt(KEY_RINGING_DETECTED, 0)
+            prefs.edit().putInt(KEY_RINGING_DETECTED, current + 1).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun getRingingDetectedCount(context: Context): Int {
+        return try {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getInt(KEY_RINGING_DETECTED, 0)
+        } catch (_: Exception) {
+            0
+        }
+    }
 
     fun recordScreeningInvoked(context: Context, number: String?) {
         try {
